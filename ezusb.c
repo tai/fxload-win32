@@ -26,7 +26,7 @@
 # include  <stdlib.h>
 # include  <string.h>
 
-# include  "usb.h"
+# include  "libusb.h"
 
 # include "ezusb.h"
 
@@ -101,7 +101,7 @@ static int fx2_is_external (unsigned short addr, size_t len)
  * This is O/S specific ...
  */
 static inline int ctrl_msg (
-    usb_dev_handle			*device,
+    libusb_device_handle		*device,
     unsigned char			requestType,
     unsigned char			request,
     unsigned short			value,
@@ -110,13 +110,13 @@ static inline int ctrl_msg (
     size_t				length
 ) {
 
-    return usb_control_msg(device, 
-			   (int)requestType,
-			   (int)request,
-			   (int)value,
-			   (int)index,
-			   (char*)data,
-			   (int)length,
+    return libusb_control_transfer(device, 
+			   requestType,
+			   request,
+			   value,
+			   index,
+			   data,
+			   length,
 			   10000);
 }
 
@@ -138,7 +138,7 @@ static inline int ctrl_msg (
  * Issues the specified vendor-specific read request.
  */
 static int ezusb_read (
-    usb_dev_handle			*device,
+    libusb_device_handle		*device,
     char				*label,
     unsigned char			opcode,
     unsigned short			addr,
@@ -150,7 +150,7 @@ static int ezusb_read (
     if (verbose)
 	logerror("%s, addr 0x%04x len %4d (0x%04x)\n", label, addr, len, len);
     status = ctrl_msg (device,
-	USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE, opcode,
+	LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE, opcode,
 	addr, 0,
 	data, len);
     if (status != len) {
@@ -166,7 +166,7 @@ static int ezusb_read (
  * Issues the specified vendor-specific write request.
  */
 static int ezusb_write (
-    usb_dev_handle			*device,
+    libusb_device_handle		*device,
     char				*label,
     unsigned char			opcode,
     unsigned short			addr,
@@ -178,7 +178,7 @@ static int ezusb_write (
     if (verbose)
 	logerror("%s, addr 0x%04x len %4d (0x%04x)\n", label, addr, len, len);
     status = ctrl_msg (device,
-	USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE, opcode,
+	LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE, opcode,
 	addr, 0,
 	(unsigned char *) data, len);
     if (status != len) {
@@ -195,7 +195,7 @@ static int ezusb_write (
  * Returns false on error.
  */
 static int ezusb_cpucs (
-    usb_dev_handle	*device,
+    libusb_device_handle	*device,
     unsigned short	addr,
     int			doRun
 ) {
@@ -205,7 +205,7 @@ static int ezusb_cpucs (
     if (verbose)
 	logerror("%s\n", data ? "stop CPU" : "reset CPU");
     status = ctrl_msg (device,
-	USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+	LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE,
 	RW_INTERNAL,
 	addr, 0,
 	&data, 1);
@@ -225,7 +225,7 @@ static int ezusb_cpucs (
  * *data == 0 means it uses 8 bit addresses (or there is no EEPROM),
  * *data == 1 means it uses 16 bit addresses
  */
-static inline int ezusb_get_eeprom_type (usb_dev_handle	*device, unsigned char *data)
+static inline int ezusb_get_eeprom_type (libusb_device_handle *device, unsigned char *data)
 {
     return ezusb_read (device, "get EEPROM size", GET_EEPROM_SIZE, 0, data, 1);
 }
@@ -400,7 +400,7 @@ typedef enum {
 } ram_mode;
 
 struct ram_poke_context {
-    usb_dev_handle	*device;
+    libusb_device_handle	*device;
     ram_mode	mode;
     unsigned	total, count;
 };
@@ -479,7 +479,7 @@ static int ram_poke (
  * memory is written, expecting a second stage loader to have already
  * been loaded.  Then file is re-parsed and on-chip memory is written.
  */
-int ezusb_load_ram (usb_dev_handle *device, const char *path, int fx2, int stage)
+int ezusb_load_ram (libusb_device_handle *device, const char *path, int fx2, int stage)
 {
     FILE			*image;
     unsigned short		cpucs_addr;
@@ -565,7 +565,7 @@ int ezusb_load_ram (usb_dev_handle *device, const char *path, int fx2, int stage
  * For writing to EEPROM using a 2nd stage loader
  */
 struct eeprom_poke_context {
-    usb_dev_handle      *device;
+    libusb_device_handle      *device;
     unsigned short	ee_addr;	/* next free address */
     int			last;
 };
@@ -629,7 +629,7 @@ static int eeprom_poke (
  * Caller must have pre-loaded a second stage loader that knows how
  * to handle the EEPROM write requests.
  */
-int ezusb_load_eeprom (usb_dev_handle *dev, const char *path, const char *type, int config)
+int ezusb_load_eeprom (libusb_device_handle *dev, const char *path, const char *type, int config)
 {
     FILE			*image;
     unsigned short		cpucs_addr;

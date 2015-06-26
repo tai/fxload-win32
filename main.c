@@ -46,7 +46,7 @@
 # include  <fcntl.h>
 # include  <unistd.h>
 
-#include "usb.h"
+#include "libusb.h"
 # include  "ezusb.h"
 
 #ifndef	FXLOAD_VERSION
@@ -71,48 +71,38 @@ void logerror(const char *format, ...)
 }
 
 #define DEV_LIST_MAX 128
-usb_dev_handle *get_usb_device() {
-      struct usb_bus *bus;
-      struct usb_device *dev;
-      struct usb_device *devlist[DEV_LIST_MAX];
-      usb_dev_handle *dev_h = NULL;
-      int index = 0;
-      char sbuf[128];
-      int sel; 
-      int i;
+libusb_device_handle *get_usb_device() {
+      libusb_device **list;
+      libusb_device_handle *dev_h = NULL;
 
-      for(i=0;i<DEV_LIST_MAX;i++)
-	    devlist[i] = NULL;
-      usb_init();
-      usb_set_debug(0);
-      usb_find_busses();
-      usb_find_devices();
-      for (bus = usb_get_busses(); bus; bus = bus->next) {
-	    for (dev = bus->devices; dev; dev = dev->next) {
-		  printf("%d: VendId: %04X ProdId: %04X\n", 
-			 index,
-			 dev->descriptor.idVendor,
-			 dev->descriptor.idProduct);
-		  if(index < DEV_LIST_MAX)
-			devlist[index] = dev;
-		  index++;
-	    }
+      libusb_init(NULL);
+      libusb_set_debug(NULL, 0);
+
+      int i, nr = libusb_get_device_list(NULL, &list);
+      for (i = 0; i < nr; i++) {
+          struct libusb_device_descriptor desc;
+          libusb_get_device_descriptor(list[i], &desc);
+
+          printf("%d: VendId: %04X ProdId: %04X\n",
+                 i, desc.idVendor, desc.idProduct);
       }
+
+      char sbuf[32];
+
       printf("Please select device to configure: ");
       fflush(NULL);
       fgets(sbuf, 32, stdin);
-      sel = atoi(sbuf);
-      if( sel < 0 || sel >= DEV_LIST_MAX || devlist[sel] == NULL ) {
-	    logerror("device selection out of bound: %d\n", sel);
+
+      int sel = atoi(sbuf);
+      if( sel < 0 || sel >= nr) {
+            logerror("device selection out of bound: %d\n", sel);
 	    return NULL;
       }  
       
-      dev_h = usb_open(devlist[sel]);
-      if(dev_h)
-	    return dev_h;
-      else
-	    return NULL;
-      
+      libusb_open(list[sel], &dev_h);
+      libusb_free_device_list(list, 1);
+
+      return dev_h;
 }
 
 
@@ -195,7 +185,7 @@ int main(int argc, char*argv[])
 
 
       if (ihex_path) {
-	    usb_dev_handle	*device;
+	    libusb_device_handle *device;
 	    device = get_usb_device();
 	    int status;
 	    int	fx2;
@@ -238,7 +228,7 @@ int main(int argc, char*argv[])
 		    return status;
 	    }
 
-	    usb_close(device);
+	    libusb_close(device);
       }
 
   

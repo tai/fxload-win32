@@ -21,6 +21,7 @@
  */
 #ident "$Id: ezusb.h,v 1.1 2007/03/19 20:46:30 cfavi Exp $"
 
+# include <libusb.h>
 
 /*
  * This function loads the firmware from the given file into RAM.
@@ -31,7 +32,7 @@
  *
  * The target processor is reset at the end of this download.
  */
-extern int ezusb_load_ram (usb_dev_handle *device, const char *path, int fx2, int stage);
+extern int ezusb_load_ram (libusb_device_handle *device, const char *path, int fx2, int stage);
 
 
 /*
@@ -46,7 +47,7 @@ extern int ezusb_load_ram (usb_dev_handle *device, const char *path, int fx2, in
  * how to respond to the EEPROM write request.
  */
 extern int ezusb_load_eeprom (
-	usb_dev_handle	*dev,		/* usbfs device handle */
+	libusb_device_handle	*dev,		/* usbfs device handle */
 	const char *path,	/* path to hexfile */
 	const char *type,	/* fx, fx2, an21 */
 	int config		/* config byte for fx/fx2; else zero */
