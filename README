@@ -1,0 +1,26 @@
+fxload-libusb  
+=============
+
+Copyright (c) 2007 claudio.favi@epfl.ch
+
+This code was modified from linux-hotplug project. 
+http://linux-hotplug.sourceforge.net/
+
+Copying: read the copying coming with the code.
+
+Usage is very similar to the original code expect that the device
+selection/link/mode functions have been removed and replace with
+interactive selection.
+
+To load into RAM:
+./fxload-libusb.exe -t fx2 -I ../fx2fw-sdcc/usbjtag.hex
+To flash the EEPROM use the Vend_Ax.hex stage2 loader from Cypress.
+./fxload-libusb.exe -s Vend_Ax.hex -c 0xC2 -t fx2 -I ../fx2fw-sdcc/usbjtag.hex
+
+Dependencies: libusb: I used libusb-win32-filter-bin-0.1.12.0.exe . If
+you use a different version and it does work. copy from libusb
+installation tree the usb.h and libusb.a files. Then recompile.
+
+
+Compilation: I use mingw32-gcc to create a standalone exe but you
+could also use cygwin gcc.  Edit the makefile and then type: make
