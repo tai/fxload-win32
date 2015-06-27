@@ -19,9 +19,14 @@
  *    along with this program; if not, write to the Free Software
  *    Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
  */
-#ident "$Id: ezusb.h,v 1.1 2007/03/19 20:46:30 cfavi Exp $"
 
-# include <libusb.h>
+#include <libusb.h>
+
+/*
+ * Enum to manage various EZ-USB chip types.
+ */
+typedef enum { NONE, AN21, FX, FX2, FX2LP } ezusb_chip_t;
+extern const char *ezusb_name[];
 
 /*
  * This function loads the firmware from the given file into RAM.
@@ -32,7 +37,7 @@
  *
  * The target processor is reset at the end of this download.
  */
-extern int ezusb_load_ram (libusb_device_handle *device, const char *path, int fx2, int stage);
+extern int ezusb_load_ram (libusb_device_handle *device, const char *path, ezusb_chip_t type, int stage);
 
 
 /*
@@ -49,7 +54,7 @@ extern int ezusb_load_ram (libusb_device_handle *device, const char *path, int f
 extern int ezusb_load_eeprom (
 	libusb_device_handle	*dev,		/* usbfs device handle */
 	const char *path,	/* path to hexfile */
-	const char *type,	/* fx, fx2, an21 */
+	ezusb_chip_t type,	/* fx, fx2, an21 */
 	int config		/* config byte for fx/fx2; else zero */
 	);
 

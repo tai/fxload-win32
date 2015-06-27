@@ -18,45 +18,24 @@
  *    along with this program; if not, write to the Free Software
  *    Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
  */
-#ident "$Id: main.c,v 1.2 2007/03/20 14:31:50 cfavi Exp $"
 
-/*
- * This program supports loading firmware into a target USB device
- * that is discovered and referenced by the hotplug usb agent. It can
- * also do other useful things, like set the permissions of the device
- * and create a symbolic link for the benefit of applications that are
- * looking for the device.
- *
- *     -I <path>       -- Download this firmware (intel hex)
- *     -t <type>       -- uController type: an21, fx, fx2
- *     -s <path>       -- use this second stage loader
- *     -c <byte>       -- Download to EEPROM, with this config byte
- *
- *     -V              -- Print version ID for program
- *
- */
-
-# include  <stdlib.h>
-# include  <stdio.h>
-# include  <getopt.h>
-# include  <string.h>
-
-//# include  <sys/types.h>
-//# include  <sys/stat.h>
-# include  <fcntl.h>
-# include  <unistd.h>
-
-#include "libusb.h"
-# include  "ezusb.h"
-
-#ifndef	FXLOAD_VERSION
-#	define FXLOAD_VERSION (__DATE__ " (development)")
-#endif
-
-#include <errno.h>
-
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <stdarg.h>
 
+#include <ctype.h>
+#include <string.h>
+#include <getopt.h>
+
+#include "libusb.h"
+#include "ezusb.h"
+
+#ifndef	FXLOAD_VERSION
+#	define FXLOAD_VERSION (__DATE__ " (modified version at http://github.com/tai)")
+#endif
+
+struct device_spec { int index, vid, pid, bus, port; };
 
 void logerror(const char *format, ...)
     __attribute__ ((format (__printf__, 1, 2)));
@@ -70,184 +49,241 @@ void logerror(const char *format, ...)
     va_end(ap);
 }
 
-#define DEV_LIST_MAX 128
-libusb_device_handle *get_usb_device() {
-      libusb_device **list;
-      libusb_device_handle *dev_h = NULL;
+void usage(const char *argv0) {
+    char *p = strrchr(argv0, '/');
+    char *q = strrchr(argv0, '\\');
 
-      libusb_init(NULL);
-      libusb_set_debug(NULL, 0);
+    // basename of argv0
+    p = (p > q) ? p+1 : q+1;
 
-      int i, nr = libusb_get_device_list(NULL, &list);
-      for (i = 0; i < nr; i++) {
-          struct libusb_device_descriptor desc;
-          libusb_get_device_descriptor(list[i], &desc);
-
-          printf("%d: VendId: %04X ProdId: %04X\n",
-                 i, desc.idVendor, desc.idProduct);
-      }
-
-      char sbuf[32];
-
-      printf("Please select device to configure: ");
-      fflush(NULL);
-      fgets(sbuf, 32, stdin);
-
-      int sel = atoi(sbuf);
-      if( sel < 0 || sel >= nr) {
-            logerror("device selection out of bound: %d\n", sel);
-	    return NULL;
-      }  
-      
-      libusb_open(list[sel], &dev_h);
-      libusb_free_device_list(list, 1);
-
-      return dev_h;
+    fprintf(stderr, "Usage: %s [options] -I file [-c 0xC[02] -s loader]\n", p);
+    fprintf(stderr,
+            "Options:\n"
+            "  -D <dev>   : select device by vid:pid or bus.port\n"
+            "  -t <type>  : select type from (an21|fx|fx2|fx2lp)\n"
+            "  -I <file>  : program hex file\n"
+            "  -s <loader>: program stage1 loader to write a file into EEPROM\n"
+            "  -c <byte>  : program first byte of EEPROM with either 0xC0 or 0xC2\n"
+            "  -V         : show version\n"
+            "  -v         : show verbose message\n");
+    fprintf(stderr,
+            "Examples:\n"
+            "  // program fw.hex to the FIRST device with given vid\n"
+            "  $ %s -d 04b4:@0 -I fw.hex\n"
+            "\n"
+            "  // program fw.hex to the SECOND device at given bus\n"
+            "  $ %s -d 004.@1 -I fw.hex\n"
+            "\n"
+            "  // program vid:pid info to EEPROM\n"
+            "  $ %s -I vidpid.hex -c 0xC0 -s Vend_Ax.hex\n"
+            "\n"
+            "  // program whole firmware to EEPROM\n"
+            "  $ %s -I fwfile.hex -c 0xC2 -s Vend_Ax.hex\n", p, p, p, p);
+    exit(1);
 }
 
+libusb_device_handle *get_usb_device(struct device_spec *wanted) {
+    libusb_device **list;
+    libusb_device_handle *dev_h = NULL;
+
+    libusb_init(NULL);
+    libusb_set_debug(NULL, 0);
+
+    libusb_device *found;
+    int nr_found = 0;
+    int interactive = (wanted->vid == 0 && wanted->bus == 0);
+    
+    int i, nr = libusb_get_device_list(NULL, &list);
+    for (i = 0; i < nr; i++) {
+        libusb_device *dev = list[i];
+
+        struct libusb_device_descriptor desc;
+        libusb_get_device_descriptor(dev, &desc);
+
+        uint16_t  vid = desc.idVendor;
+        uint16_t  pid = desc.idProduct;
+        uint8_t   bus = libusb_get_bus_number(dev);
+        uint8_t  port = libusb_get_port_number(dev);
+
+        if ((bus == wanted->bus && (port == wanted->port || wanted->port == 0)) ||
+            (vid == wanted->vid && ( pid == wanted->pid  || wanted->pid  == 0))) {
+            if (nr_found++ == wanted->index) {
+                found = dev;
+                break;
+            }
+        }
+
+        if (interactive) {
+            unsigned char mfg[80] = {0}, prd[80] = {0}, ser[80] = {0};
+            libusb_device_handle *dh;
+
+            if (libusb_open(dev, &dh) == LIBUSB_SUCCESS) {
+                libusb_get_string_descriptor_ascii(dh, desc.iManufacturer, mfg, sizeof(mfg));
+                libusb_get_string_descriptor_ascii(dh, desc.iProduct     , prd, sizeof(prd));
+                libusb_get_string_descriptor_ascii(dh, desc.iSerialNumber, ser, sizeof(ser));
+                libusb_close(dh);
+            }
+            printf("%d: Bus %03d Device %03d: ID %04X:%04X %s %s %s\n", i, bus, port, vid, pid, mfg, prd, ser);
+        }
+    }
+
+    if (interactive) {
+        char sbuf[32];
+        printf("Please select device to configure [0-%d]: ", nr - 1);
+        fflush(NULL);
+        fgets(sbuf, 32, stdin);
+
+        int sel = atoi(sbuf);
+        if( sel < 0 || sel >= nr) {
+            logerror("device selection out of bound: %d\n", sel);
+            return NULL;
+        }
+
+        found = list[sel];
+    }
+      
+    libusb_open(found, &dev_h);
+    libusb_free_device_list(list, 1);
+
+    return dev_h;
+}
+
+void
+parse_device_path(const char *device_path, struct device_spec *spec) {
+    char *sub;
+
+    if ((sub = strchr(device_path, ':')) != NULL) {
+        spec->vid = strtol(device_path, NULL, 16);
+        spec->pid = strtol(    sub + 1, NULL, 16);
+    }
+    else if ((sub = strchr(device_path, '.')) != NULL) {
+        spec->port = atoi(device_path);
+        spec->bus  = atoi(sub + 1);
+    }
+
+    if ((sub = strchr(device_path, '@')) != NULL) {
+        spec->index = atoi(sub + 1);
+    }
+}
 
 int main(int argc, char*argv[])
 {
-      const char	*link_path = 0;
-      const char	*ihex_path = 0;
-      const char	*device_path = getenv("DEVICE");
-      const char	*type = 0;
-      const char	*stage1 = 0;
-      mode_t		mode = 0;
-      int		opt;
-      int		config = -1;
+    struct device_spec spec = {0};
+    ezusb_chip_t type = NONE;
 
-      while ((opt = getopt (argc, argv, "2vV?I:c:s:t:")) != EOF)
-      switch (opt) {
+    const char	*ihex_path = 0;
+    const char	*stage1 = 0;
+    int		opt;
+    int		config = -1;
 
-	  case '2':		// original version of "-t fx2"
-	    type = "fx2";
-	    break;
-
-	  case 'I':
+    while ((opt = getopt (argc, argv, "h?VvI:D:c:s:t:")) != EOF) {
+        switch (opt) {
+        case 'I':
 	    ihex_path = optarg;
 	    break;
 
-	  case 'V':
-	    puts (FXLOAD_VERSION);
+        case 'V':
+	    puts(FXLOAD_VERSION);
 	    return 0;
 
-	  case 'c':
+        case 'D':
+	    parse_device_path(optarg, &spec);
+	    break;
+
+        case 'c':
 	    config = strtoul (optarg, 0, 0);
 	    if (config < 0 || config > 255) {
 		logerror("illegal config byte: %s\n", optarg);
-		goto usage;
+		usage(argv[0]);
 	    }
 	    break;
 
-	  case 's':
+        case 's':
 	    stage1 = optarg;
 	    break;
 
-	  case 't':
-	    if (strcmp (optarg, "an21")		// original AnchorChips parts
-		    && strcmp (optarg, "fx")	// updated Cypress versions
-		    && strcmp (optarg, "fx2")	// Cypress USB 2.0 versions
-		    ) {
+        case 't':
+	    type = ((strcmp(optarg, "an21")  == 0) ? AN21 :
+                    (strcmp(optarg, "fx")    == 0) ? FX   :
+                    (strcmp(optarg, "fx2")   == 0) ? FX2  :
+                    (strcmp(optarg, "fx2lp") == 0) ? FX2LP : 0);
+            if (type == 0) {
 		logerror("illegal microcontroller type: %s\n", optarg);
-		goto usage;
+		usage(argv[0]);
 	    }
-	    type = optarg;
 	    break;
 
-	  case 'v':
+        case 'v':
 	    verbose++;
 	    break;
 
-	  case '?':
-	  default:
-	    goto usage;
+        default:
+            usage(argv[0]);
+        }
+    }
 
-      }
+    if (config >= 0) {
+        if (type == 0) {
+            logerror("must specify microcontroller type %s",
+                     "to write EEPROM!\n");
+            usage(argv[0]);
+        }
+        if (!stage1 || !ihex_path) {
+            logerror("need 2nd stage loader and firmware %s",
+                     "to write EEPROM!\n");
+            usage(argv[0]);
+        }
+    }
 
-      if (config >= 0) {
-	    if (type == 0) {
-		logerror("must specify microcontroller type %s",
-				"to write EEPROM!\n");
-		goto usage;
-	    }
-	    if (!stage1 || !ihex_path) {
-		logerror("need 2nd stage loader and firmware %s",
-				"to write EEPROM!\n");
-		goto usage;
-	    }
-	    if (link_path || mode) {
-		logerror("links and modes not set up when writing EEPROM\n");
-		goto usage;
-	    }
-      }
+    if (ihex_path) {
+        libusb_device_handle *device;
+        int status;
 
+        device = get_usb_device(&spec);
 
+        if (device == NULL) {
+            logerror("No device to configure\n");
+            return -1;
+        }
 
-      if (ihex_path) {
-	    libusb_device_handle *device;
-	    device = get_usb_device();
-	    int status;
-	    int	fx2;
+        if (type == NONE) {
+            type = FX; /* an21-compatible for most purposes */
+        }
 
-	    if (device == NULL) {
-		logerror("No device to configure\n");
-		return -1;
-	    }
-
-	    if (type == 0) {
-	    	type = "fx";	/* an21-compatible for most purposes */
-		fx2 = 0;
-	    } else
- 		fx2 = (strcmp (type, "fx2") == 0);
-	    
-	    if (verbose)
-		logerror("microcontroller type: %s\n", type);
-
-	    if (stage1) {
-		/* first stage:  put loader into internal memory */
-		if (verbose)
-		    logerror("1st stage:  load 2nd stage loader\n");
-		status = ezusb_load_ram (device, stage1, fx2, 0);
-		if (status != 0)
-		    return status;
+        if (stage1) {
+            /* first stage:  put loader into internal memory */
+            if (verbose)
+                logerror("1st stage:  load 2nd stage loader\n");
+            status = ezusb_load_ram (device, stage1, type, 0);
+            if (status != 0)
+                return status;
 		
-		/* second stage ... write either EEPROM, or RAM.  */
-		if (config >= 0)
-		    status = ezusb_load_eeprom (device, ihex_path, type, config);
-		else
-		    status = ezusb_load_ram (device, ihex_path, fx2, 1);
-		if (status != 0)
-		    return status;
-	    } else {
-		/* single stage, put into internal memory */
-		if (verbose)
-		    logerror("single stage:  load on-chip memory\n");
-		status = ezusb_load_ram (device, ihex_path, fx2, 0);
-		if (status != 0)
-		    return status;
-	    }
+            /* second stage ... write either EEPROM, or RAM.  */
+            if (config >= 0)
+                status = ezusb_load_eeprom (device, ihex_path, type, config);
+            else
+                status = ezusb_load_ram (device, ihex_path, type, 1);
+            if (status != 0)
+                return status;
+        } else {
+            /* single stage, put into internal memory */
+            if (verbose)
+                logerror("single stage:  load on-chip memory\n");
+            status = ezusb_load_ram (device, ihex_path, type, 0);
+            if (status != 0)
+                return status;
+        }
 
-	    libusb_close(device);
-      }
+        libusb_close(device);
+    }
 
   
-      if (!ihex_path) {
-	    logerror("missing hex file\n");
-	    return -1;
-      }
+    if (!ihex_path) {
+        logerror("missing hex file\n");
+        return -1;
+    }
 
-      return 0;
-
-usage:
-      fputs ("usage: ", stderr);
-      fputs (argv [0], stderr);
-      fputs (" [-vV] [-t type]\n", stderr);
-      fputs ("\t\t-I firmware_hexfile ", stderr);
-      fputs ("[-s loader] [-c config_byte]\n", stderr);
-      fputs ("... device types:  one of an21, fx, fx2\n", stderr);
-      return -1;
-
+    exit(0);
 }
 
 
