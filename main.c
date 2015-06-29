@@ -89,7 +89,7 @@ libusb_device_handle *get_usb_device(struct device_spec *wanted) {
     libusb_init(NULL);
     libusb_set_debug(NULL, 0);
 
-    libusb_device *found;
+    libusb_device *found = NULL;
     int nr_found = 0;
     int interactive = (wanted->vid == 0 && wanted->bus == 0);
     
@@ -141,6 +141,11 @@ libusb_device_handle *get_usb_device(struct device_spec *wanted) {
 
         found = list[sel];
     }
+
+    if (! found) {
+        logerror("device not selected\n");
+        return NULL;
+    }
       
     libusb_open(found, &dev_h);
     libusb_free_device_list(list, 1);
@@ -157,8 +162,8 @@ parse_device_path(const char *device_path, struct device_spec *spec) {
         spec->pid = strtol(    sub + 1, NULL, 16);
     }
     else if ((sub = strchr(device_path, '.')) != NULL) {
-        spec->port = atoi(device_path);
-        spec->bus  = atoi(sub + 1);
+        spec->bus  = atoi(device_path);
+        spec->port = atoi(sub + 1);
     }
 
     if ((sub = strchr(device_path, '@')) != NULL) {
