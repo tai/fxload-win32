@@ -671,6 +671,7 @@ int ezusb_load_eeprom (libusb_device_handle *dev, const char *path, ezusb_chip_t
 		// (Silicon revs B, C?  Rev E is nice!)
 	    (config & 0x01) ? 400 : 100
 	    );
+        break;
 
     case FX:
 	first_byte = 0xB6;
@@ -685,6 +686,7 @@ int ezusb_load_eeprom (libusb_device_handle *dev, const char *path, ezusb_chip_t
 	    (config & 0x02) ? " inverted" : "",
 	    (config & 0x01) ? 400 : 100
 	    );
+        break;
 
     case AN21:
 	first_byte = 0xB2;
@@ -693,6 +695,7 @@ int ezusb_load_eeprom (libusb_device_handle *dev, const char *path, ezusb_chip_t
 	ctx.ee_addr = 7;
 	config = 0;
 	logerror("AN21xx:  no EEPROM config byte\n");
+        break;
 
     default:
 	logerror("?? Unrecognized microcontroller type %s ??\n", ezusb_name[type]);
